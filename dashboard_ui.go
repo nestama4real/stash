@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"image/color"
+	"math"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,10 +92,21 @@ func (m Model) workColumn(col, width, height int) []string {
 			rule = st(pink, bg)
 		}
 	}
-	head := titleStyle.Render(title) + count
+	rows := height - 2
+	first := max(0, min(m.workTop[col], len(items)-rows))
+	// Where the list stands when it scrolls, in the header: no line lost.
+	scroll := ""
+	if above, below := first, len(items)-first-rows; above > 0 || below > 0 {
+		if above > 0 {
+			scroll += st(cyan, bg).Render("↑") + st(faint, bg).Italic(true).Render(fmt.Sprintf("%d ", above))
+		}
+		if below > 0 {
+			scroll += st(cyan, bg).Render(" ↓") + st(faint, bg).Italic(true).Render(fmt.Sprint(below))
+		}
+	}
+	head := spread(titleStyle.Render(title)+count, scroll+st(ink, bg).Render(" "), width, bg)
 	lines := []string{fill(head, width, bg), rule.Render(strings.Repeat("─", max(0, width)))}
 
-	rows := height - len(lines)
 	if len(items) == 0 {
 		msg := "Nothing this week."
 		if col == colPrevious {
@@ -100,17 +114,12 @@ func (m Model) workColumn(col, width, height int) []string {
 		}
 		lines = append(lines, fill(st(lime, bg).Render("✓ ")+st(faint, bg).Italic(true).Render(msg), width, bg))
 	}
-	// Keep the selection in view.
-	first := 0
-	if focused && m.dashItem >= rows {
-		first = m.dashItem - rows + 1
-	}
 	now := time.Now()
 	for r := first; r < len(items) && r < first+rows; r++ {
 		lec := m.lectures[items[r]]
 		ci := m.courseIndex(lec.CourseID)
 		status := m.workField(lec)
-		selected := focused && r == m.dashItem
+		selected := focused && r == m.dashItems[col]
 		rbg := bg
 		marker := st(ink, rbg).Render("  ")
 		titleStyle := st(ink, rbg)
@@ -139,9 +148,6 @@ func (m Model) workColumn(col, width, height int) []string {
 		titleWidth := max(1, width-2-8-lipgloss.Width(right)-1)
 		lines = append(lines, fill(marker+course+st(ink, rbg).Render(" ")+
 			fill(titleStyle.Render(fitted(lec.Title, titleWidth)), titleWidth, rbg)+st(ink, rbg).Render(" ")+right, width, rbg))
-	}
-	if hidden := len(items) - first - rows; hidden > 0 && len(lines) > 2 {
-		lines[len(lines)-1] = spread("", st(faint, bg).Italic(true).Render(fmt.Sprintf("%d more ", hidden))+st(cyan, bg).Render("↓"), width, bg)
 	}
 	for len(lines) < height {
 		lines = append(lines, fill("", width, bg))
@@ -176,16 +182,192 @@ func (m Model) planText(text string, width int, bg color.Color, selected bool) s
 	return base.Render(text)
 }
 
-// dayColumn renders one day of the planner.
-func (m Model) dayColumn(d, width, height int) []string {
+// ---------------------------------------------------------------- timeline
+
+// gridColor draws the faint hour lines of the planner.
+var gridColor = lipgloss.Color("#2C2C33")
+
+func minutes(hhmm string) int {
+	h, mm, _ := strings.Cut(hhmm, ":")
+	hour, _ := strconv.Atoi(h)
+	minute, _ := strconv.Atoi(mm)
+	return hour*60 + minute
+}
+
+// span is when a plan takes place, in minutes; without an end, an hour.
+func span(p Plan) (start, end int) {
+	start = minutes(p.Start)
+	end = start + 60
+	if p.End != "" && minutes(p.End) > start {
+		end = minutes(p.End)
+	}
+	return start, min(end, 24*60)
+}
+
+func clockLabel(minute int) string {
+	if minute%60 == 0 {
+		return fmt.Sprintf("%02dh", minute/60)
+	}
+	return fmt.Sprintf("%02dh%02d", minute/60, minute%60)
+}
+
+// timeline is the week's time axis, shared by every day so that the same
+// hour sits on the same line all week. Band i runs from bounds[i] to
+// bounds[i+1] and takes heights[i] lines: roughly in proportion to its
+// length, but never so little that a plan cannot show its time and text.
+type timeline struct {
+	bounds, heights []int
+}
+
+func (t timeline) total() int {
+	n := 0
+	for _, h := range t.heights {
+		n += h
+	}
+	return n
+}
+
+// line returns the first line of the band starting at minute.
+func (t timeline) line(minute int) int {
+	n := 0
+	for i, b := range t.bounds[:len(t.bounds)-1] {
+		if b >= minute {
+			break
+		}
+		n += t.heights[i]
+	}
+	return n
+}
+
+// timeline fits the shown week's plans into room lines.
+func (m Model) timeline(room int) timeline {
+	week := m.viewWeek()
+	var spans [][2]int
+	for _, p := range m.plans {
+		if p.Start != "" && !p.Day.Before(week) && p.Day.Before(week.AddDate(0, 0, 7)) {
+			s, e := span(p)
+			spans = append(spans, [2]int{s, e})
+		}
+	}
+	if len(spans) == 0 {
+		return timeline{}
+	}
+	lo, hi := 24*60, 0
+	for _, s := range spans {
+		lo, hi = min(lo, s[0]), max(hi, s[1])
+	}
+	lo, hi = lo/60*60, (hi+59)/60*60
+	build := func(hours bool, scale float64) timeline {
+		set := map[int]bool{lo: true, hi: true}
+		for _, s := range spans {
+			set[s[0]], set[s[1]] = true, true
+		}
+		if hours {
+			for h := lo; h < hi; h += 60 {
+				set[h] = true
+			}
+		}
+		var t timeline
+		for b := range set {
+			t.bounds = append(t.bounds, b)
+		}
+		sort.Ints(t.bounds)
+		for i := 0; i+1 < len(t.bounds); i++ {
+			lines := int(math.Round(float64(t.bounds[i+1]-t.bounds[i]) / 60 * scale))
+			t.heights = append(t.heights, max(1, lines))
+		}
+		// Every plan gets at least two lines: its time, then what.
+		for _, s := range spans {
+			first, last, sum := -1, -1, 0
+			for i := range t.heights {
+				if t.bounds[i] >= s[0] && t.bounds[i+1] <= s[1] {
+					if first < 0 {
+						first = i
+					}
+					last, sum = i, sum+t.heights[i]
+				}
+			}
+			if last >= 0 && sum < 2 {
+				t.heights[last] += 2 - sum
+			}
+		}
+		return t
+	}
+	var t timeline
+	for _, hours := range []bool{true, false} {
+		// At most two lines an hour: half-hours read well, and the rest of
+		// the screen is better spent on the work lists.
+		for _, scale := range []float64{2, 1.5, 1, 0.5, 0} {
+			if t = build(hours, scale); t.total() <= room {
+				return t
+			}
+		}
+	}
+	return t // Too tall anyway: the bottom gets cut.
+}
+
+// card renders the lines of a plan, height lines tall and width wide.
+func (m Model) card(p Plan, width, height int, selected bool) []string {
+	accent := violet
+	word, _, _ := strings.Cut(p.Text, " ")
+	if ci := m.courseFor(word); ci >= 0 {
+		accent = courseColor(ci)
+	}
+	tint := lipgloss.Darken(accent, 0.84)
+	textColor := muted
+	if selected {
+		tint, textColor = lipgloss.Darken(accent, 0.62), ink
+	}
+	bar := st(accent, tint).Render("▌")
+	inner := max(1, width-2)
+	when := strings.ReplaceAll(p.Start, ":", "h")
+	if p.End != "" {
+		when += " → " + strings.ReplaceAll(p.End, ":", "h")
+	}
+	if lipgloss.Width(when) > inner {
+		when = strings.ReplaceAll(p.Start, ":", "h") // Narrow: the start says enough.
+	}
+	timeStyle := st(lipgloss.Lighten(tint, 0.45), tint).Italic(true)
+	if selected {
+		timeStyle = st(ink, tint).Italic(true).Bold(true)
+	}
+	row := func(s string) string { return bar + st(ink, tint).Render(" ") + fill(s, inner, tint) }
+	if height == 1 {
+		return []string{row(timeStyle.Render(when) + st(ink, tint).Render(" ") + m.planText(p.Text, inner, tint, selected))}
+	}
+	lines := []string{row(timeStyle.Render(when))}
+	wrapped := strings.Split(lipgloss.NewStyle().Width(inner).Render(p.Text), "\n")
+	for i := 0; len(lines) < height; i++ {
+		switch {
+		case i == 0:
+			text := strings.TrimRight(wrapped[0], " ")
+			if len(wrapped) > height-1 && height == 2 {
+				text = p.Text // One line only: let it end in an ellipsis.
+			}
+			lines = append(lines, row(m.planText(text, inner, tint, selected)))
+		case i < len(wrapped):
+			text := strings.TrimRight(wrapped[i], " ")
+			if len(lines) == height-1 && i < len(wrapped)-1 {
+				text = strings.Join(wrapped[i:], " ")
+			}
+			lines = append(lines, row(st(textColor, tint).Render(fitted(text, inner))))
+		default:
+			lines = append(lines, row(""))
+		}
+	}
+	return lines
+}
+
+// dayColumn renders one day on the shared timeline: its header, the plans
+// placed by time (side by side when they overlap), then the "add" row.
+func (m Model) dayColumn(d, width int, t timeline) []string {
 	bg := base
 	day := m.viewWeek().AddDate(0, 0, d)
-	isToday := day.Equal(today())
 	focused := m.dashZone == zonePlanner && m.dashDay == d
 	name := day.Format("Monday")
 	header := st(muted, bg).Bold(true).Render(" " + name + " ")
 	switch {
-	case isToday:
+	case day.Equal(today()):
 		header = pill(" "+name+" ", brand...)
 	case focused:
 		header = st(ink, keyBg).Bold(true).Render(" " + name + " ")
@@ -198,81 +380,121 @@ func (m Model) dayColumn(d, width, height int) []string {
 	lines := []string{fill(header, width, bg), rule.Render(strings.Repeat("─", max(0, width)))}
 
 	ps := m.plansOn(day)
-	now := time.Now()
-	var rows []planRow
-	for r, pi := range ps {
-		p := m.plans[pi]
-		selected := focused && r == m.dashPlan
-		rbg := bg
-		marker := st(ink, rbg).Render(" ")
-		if selected {
-			rbg = selection
-			marker = st(violet, rbg).Render("▌")
-		}
-		var entry []string
-		if p.Start != "" {
-			when := strings.ReplaceAll(p.Start, ":", "h")
-			if p.End != "" {
-				when += " → " + strings.ReplaceAll(p.End, ":", "h")
-			}
-			whenStyle := st(faint, rbg).Italic(true)
-			if isToday && p.Start <= now.Format("15:04") && (p.End == "" || now.Format("15:04") < p.End) {
-				whenStyle = st(cyan, rbg).Bold(true).Italic(true)
-			}
-			entry = append(entry, marker+fill(whenStyle.Render(when), width-1, rbg))
-		}
-		entry = append(entry, marker+fill(st(faint, rbg).Render("• ")+m.planText(p.Text, width-3, rbg, selected), width-1, rbg))
-		rows = append(rows, planRow{entry, selected})
+	if len(t.bounds) == 0 || len(ps) == 0 && t.total() == 0 {
+		lines = append(lines, fill(st(line, bg).Italic(true).Render(" free"), width, bg))
 	}
-	if focused {
-		add := fill(st(faint, bg).Render(" + ")+st(faint, bg).Italic(true).Render("add"), width, bg)
-		if m.dashPlan == len(ps) {
-			add = st(violet, selection).Render("▌") + st(violet, selection).Bold(true).Render("+ ") +
-				st(ink, selection).Italic(true).Render("add") + st(faint, selection).Italic(true).Render("  8-10 CompSec…")
-			add = fill(add, width, selection)
+	if len(t.bounds) > 0 {
+		// Lanes: overlapping plans sit side by side.
+		lane := make([]int, len(ps))
+		var laneEnds []int
+		for i, pi := range ps {
+			s, e := span(m.plans[pi])
+			lane[i] = len(laneEnds)
+			for l, end := range laneEnds {
+				if end <= s {
+					lane[i] = l
+					break
+				}
+			}
+			if lane[i] == len(laneEnds) {
+				laneEnds = append(laneEnds, e)
+			} else {
+				laneEnds[lane[i]] = e
+			}
 		}
-		rows = append(rows, planRow{[]string{add}, m.dashPlan == len(ps)})
-	} else if len(ps) == 0 {
-		rows = append(rows, planRow{[]string{fill(st(line, bg).Italic(true).Render(" free"), width, bg)}, false})
+		lanes := max(1, len(laneEnds))
+		laneWidth := max(1, (width-(lanes-1))/lanes)
+		// The background: faint lines on the hours.
+		grid := make([][]string, lanes)
+		for l := range grid {
+			for i, h := range t.heights {
+				for y := 0; y < h; y++ {
+					if y == 0 && t.bounds[i]%60 == 0 && i > 0 {
+						grid[l] = append(grid[l], st(gridColor, bg).Render(strings.Repeat("┈", laneWidth)))
+					} else {
+						grid[l] = append(grid[l], fill("", laneWidth, bg))
+					}
+				}
+			}
+		}
+		for i, pi := range ps {
+			p := m.plans[pi]
+			s, e := span(p)
+			top, bottom := t.line(s), t.line(e)
+			card := m.card(p, laneWidth, max(1, bottom-top), focused && i == m.dashPlan)
+			for y, c := range card {
+				if top+y < len(grid[lane[i]]) {
+					grid[lane[i]][top+y] = c
+				}
+			}
+		}
+		for y := 0; y < t.total(); y++ {
+			row := ""
+			for l := range grid {
+				if l > 0 {
+					row += st(ink, bg).Render(" ")
+				}
+				row += grid[l][y]
+			}
+			lines = append(lines, fill(row, width, bg))
+		}
 	}
 
-	// Scroll so the selection stays visible; plans are a blank line apart.
-	room := height - len(lines)
-	first := 0
-	for sel := range rows {
-		if !rows[sel].selected {
-			continue
-		}
-		for {
-			used := 0
-			for r := first; r <= sel; r++ {
-				used += len(rows[r].lines) + 1
-			}
-			if used-1 <= room || first == sel {
-				break
-			}
-			first++
+	add := ""
+	if focused {
+		add = st(faint, bg).Render(" + ") + st(faint, bg).Italic(true).Render("add")
+		if m.dashPlan == len(ps) {
+			add = st(violet, selection).Render("▌") + st(violet, selection).Bold(true).Render("+ ") +
+				st(ink, selection).Italic(true).Render("add") + st(faint, selection).Italic(true).Render("  or press "+fmt.Sprint(d+1))
+			add = fill(add, width, selection)
 		}
 	}
-	for r := first; r < len(rows); r++ {
-		if len(lines)+len(rows[r].lines) > height {
-			break
+	return append(lines, fill(add, width, bg))
+}
+
+// gutter labels the timeline's lines with their times.
+func (t timeline) gutter(width int) []string {
+	bg := base
+	lines := []string{fill("", width, bg), fill("", width, bg)}
+	if len(t.bounds) == 0 {
+		return append(lines, fill("", width, bg), fill("", width, bg))
+	}
+	for i, h := range t.heights {
+		style := st(faint, bg).Italic(true)
+		if t.bounds[i]%60 == 0 {
+			style = st(muted, bg)
 		}
-		lines = append(lines, rows[r].lines...)
-		if len(lines) < height {
+		lines = append(lines, fill(style.Render(fmt.Sprintf("%*s ", width-1, clockLabel(t.bounds[i]))), width, bg))
+		for y := 1; y < h; y++ {
 			lines = append(lines, fill("", width, bg))
 		}
 	}
-	for len(lines) < height {
-		lines = append(lines, fill("", width, bg))
-	}
-	return lines[:height]
+	end := t.bounds[len(t.bounds)-1]
+	return append(lines, fill(st(muted, bg).Render(fmt.Sprintf("%*s ", width-1, clockLabel(end))), width, bg))
 }
 
-// planRow is a plan, or the "add" row, as rendered in a day.
-type planRow struct {
-	lines    []string
-	selected bool
+// dashBudget shares the dashboard's height between the work lists and the
+// planner. The planner takes the room it needs to space its hours out, as
+// long as the work lists keep a few lines; the work lists, which scroll,
+// then get everything left, so no line goes to waste.
+func (m Model) dashBudget(l layout) (workHeight int, t timeline, cols, dayRows, timelineHeight int) {
+	const gutterWidth = 7
+	cols = max(1, min(7, (l.width-gutterWidth+2)/18))
+	dayRows = (7 + cols - 1) / cols
+	plannerChrome := 3 + dayRows*3 + (dayRows - 1) // Title and gaps; per row header, rule, add row.
+	body := l.bodyHeight - 3                       // Tabs, or the input box.
+	most := max(len(m.workItems(colThisWeek)), len(m.workItems(colPrevious)), 1)
+	workMin := min(2+most, 5)
+	t = m.timeline(max(0, (body-workMin-plannerChrome)/dayRows))
+	timelineHeight = max(1, t.total()) // An empty week still says "free".
+	workHeight = max(workMin, min(2+most, body-plannerChrome-dayRows*timelineHeight))
+	return workHeight, t, cols, dayRows, timelineHeight
+}
+
+// workRows is how many lectures a work column shows at once.
+func (m Model) workRows(l layout) int {
+	h, _, _, _, _ := m.dashBudget(l)
+	return max(1, h-2)
 }
 
 func (m Model) dashboardPane(l layout) []string {
@@ -285,10 +507,8 @@ func (m Model) dashboardPane(l layout) []string {
 		lines = []string{fill("", width, bg), m.workTabs(width), fill("", width, bg)}
 	}
 
-	// Work gets up to half the body; the planner the rest.
-	body := l.bodyHeight - len(lines)
-	most := max(len(m.workItems(colThisWeek)), len(m.workItems(colPrevious)), 1)
-	workHeight := min(2+most, max(3, body/2-1))
+	workHeight, t, cols, _, timelineHeight := m.dashBudget(l)
+	const gutterWidth = 7
 	gap := 3
 	colWidth := (width - gap) / 2
 	this := m.workColumn(colThisWeek, colWidth, workHeight)
@@ -309,23 +529,32 @@ func (m Model) dashboardPane(l layout) []string {
 	}
 	lines = append(lines, fill(head, width, bg), fill("", width, bg))
 
-	cols := max(1, min(7, (width+2)/20))
-	dayRows := (7 + cols - 1) / cols
-	room := max(0, l.bodyHeight-len(lines))
-	cellHeight := max(3, (room-(dayRows-1))/dayRows)
-	cellWidth := (width - 2*(cols-1)) / cols
+	rowHeight := 3 + timelineHeight
+	cellWidth := (width - gutterWidth - 2*(cols-1)) / cols
+	gutter := t.gutter(gutterWidth)
 	for start := 0; start < 7 && len(lines) < l.bodyHeight; start += cols {
-		var cells [][]string
+		cells := [][]string{gutter}
 		for d := start; d < min(7, start+cols); d++ {
-			cells = append(cells, m.dayColumn(d, cellWidth, cellHeight))
+			cells = append(cells, m.dayColumn(d, cellWidth, t))
 		}
-		for y := 0; y < cellHeight; y++ {
+		height := 0
+		for _, c := range cells {
+			height = max(height, len(c))
+		}
+		for y := 0; y < min(height, rowHeight); y++ {
 			row := ""
 			for i, c := range cells {
-				if i > 0 {
+				w := cellWidth
+				if i == 0 {
+					w = gutterWidth
+				} else if i > 1 {
 					row += st(ink, bg).Render("  ")
 				}
-				row += fill(c[y], cellWidth, bg)
+				cell := ""
+				if y < len(c) {
+					cell = c[y]
+				}
+				row += fill(cell, w, bg)
 			}
 			lines = append(lines, fill(row, width, bg))
 		}
@@ -357,7 +586,7 @@ func (m Model) popup(width int) []string {
 	if m.mode == modePlanTime {
 		field := inputField(m.input, m.inputBack, inner-6, ink, bg, violet)
 		if m.input == "" {
-			field = st(onAccent, violet).Render(" ") + st(faint, bg).Italic(true).Render(" 8 10 · 14h30 · or just type")
+			field = st(onAccent, violet).Render(" ") + st(faint, bg).Italic(true).Render(" 8 10 · 14h30 16h · 9h")
 		}
 		lines = append(lines,
 			pad(label("When", true)+field),

@@ -211,10 +211,11 @@ func (m Model) workItems(col int) []int {
 
 func (m Model) selectedWork() int {
 	items := m.workItems(m.dashCol)
-	if m.dashZone != zoneWork || m.dashItem < 0 || m.dashItem >= len(items) {
+	item := m.dashItems[m.dashCol]
+	if m.dashZone != zoneWork || item < 0 || item >= len(items) {
 		return -1
 	}
-	return items[m.dashItem]
+	return items[item]
 }
 
 // setWork sets the tracked status of the selected lecture.
@@ -297,7 +298,7 @@ func (m *Model) goToWeek(week time.Time) {
 	if week.Equal(weekStart(time.Now())) {
 		m.dashDay = daysBetween(week, today())
 	}
-	m.dashItem, m.dashPlan = 0, 0
+	m.dashItems, m.workTop, m.dashPlan = [2]int{}, [2]int{}, 0
 	m.justDone = nil
 	// Nothing due this week: start on what is late.
 	m.dashCol = colThisWeek
@@ -352,6 +353,9 @@ func parsePlan(s string, defaultDay int) (day int, start, end, text string, err 
 			}
 		}
 		s = s[len(g[0]):]
+	}
+	if start == "" {
+		return 0, "", "", "", errString("Start with a time, e.g. “mar 8-10 CompSec : S9”.")
 	}
 	text = strings.TrimSpace(strings.TrimLeft(s, ":"))
 	if text == "" {
@@ -459,7 +463,21 @@ func (m *Model) copyPlan() {
 
 func (m *Model) clampDashboard() {
 	m.dashDay = max(0, min(6, m.dashDay))
-	m.dashItem = max(0, min(len(m.workItems(m.dashCol))-1, m.dashItem))
+	// Each work column keeps its selection in view, scrolling only once
+	// the selection reaches the top or bottom of what is shown.
+	rows := m.workRows(m.layout())
+	for col := range m.dashItems {
+		n := len(m.workItems(col))
+		item := max(0, min(n-1, m.dashItems[col]))
+		top := m.workTop[col]
+		if item < top {
+			top = item
+		}
+		if item >= top+rows {
+			top = item - rows + 1
+		}
+		m.dashItems[col], m.workTop[col] = item, max(0, min(top, n-rows))
+	}
 	m.dashPlan = max(0, min(len(m.plansOn(m.planDayDate())), m.dashPlan))
 }
 
@@ -478,10 +496,10 @@ func (m *Model) updateDashboard(k string) {
 		}
 		return
 	case "x":
-		m.dashTab, m.dashItem, m.justDone = tabExercises, 0, nil
+		m.dashTab, m.dashItems, m.workTop, m.justDone = tabExercises, [2]int{}, [2]int{}, nil
 		return
 	case "t":
-		m.dashTab, m.dashItem, m.justDone = tabTheory, 0, nil
+		m.dashTab, m.dashItems, m.workTop, m.justDone = tabTheory, [2]int{}, [2]int{}, nil
 		return
 	case "[", "<":
 		m.goToWeek(m.viewWeek().AddDate(0, 0, -7))
@@ -504,6 +522,20 @@ func (m *Model) updateDashboard(k string) {
 	case "u":
 		m.undoDelete()
 		return
+	// ctrl + arrows go from one part of the dashboard to another; the
+	// arrows alone stay within it. Each part keeps its own cursor.
+	case "ctrl+left", "alt+left":
+		m.dashZone, m.dashCol = zoneWork, colThisWeek
+		return
+	case "ctrl+right", "alt+right":
+		m.dashZone, m.dashCol = zoneWork, colPrevious
+		return
+	case "ctrl+up", "alt+up":
+		m.dashZone = zoneWork
+		return
+	case "ctrl+down", "alt+down":
+		m.dashZone = zonePlanner
+		return
 	}
 	if m.dashZone == zoneWork {
 		m.updateWork(k)
@@ -515,17 +547,13 @@ func (m *Model) updateDashboard(k string) {
 func (m *Model) updateWork(k string) {
 	switch k {
 	case "down", "j":
-		if m.dashItem+1 < len(m.workItems(m.dashCol)) {
-			m.dashItem++
-		} else {
-			m.dashZone, m.dashPlan = zonePlanner, 0
-		}
+		m.dashItems[m.dashCol]++
 	case "up", "k":
-		m.dashItem = max(0, m.dashItem-1)
-	case "left", "h":
-		m.dashCol, m.dashItem = colThisWeek, 0
-	case "right", "l":
-		m.dashCol, m.dashItem = colPrevious, 0
+		m.dashItems[m.dashCol]--
+	case "home", "g":
+		m.dashItems[m.dashCol] = 0
+	case "end", "G":
+		m.dashItems[m.dashCol] = len(m.workItems(m.dashCol)) - 1
 	case "space", "enter":
 		m.setWork("done")
 	case "o":
@@ -538,12 +566,7 @@ func (m *Model) updatePlanner(k string) {
 	case "down", "j":
 		m.dashPlan++
 	case "up", "k":
-		if m.dashPlan == 0 {
-			m.dashZone = zoneWork
-			m.dashItem = len(m.workItems(m.dashCol)) - 1
-		} else {
-			m.dashPlan--
-		}
+		m.dashPlan = max(0, m.dashPlan-1)
 	case "left", "h":
 		m.dashDay = max(0, m.dashDay-1)
 	case "right", "l":
@@ -629,6 +652,10 @@ func (m Model) courseFor(word string) int {
 			return ci
 		}
 	}
+	// Abbreviations need a few letters: "SA" is not Software Entreprise.
+	if len(w) < 4 {
+		return -1
+	}
 	for ci, c := range m.courses {
 		name := []rune(lower(c.Name))
 		if len(name) == 0 || name[0] != w[0] {
@@ -682,9 +709,12 @@ func parseTimes(s string) (start, end string, n int, err error) {
 
 func (m Model) inPopup() bool { return m.mode == modePlanTime || m.mode == modePlanText }
 
-// toText moves the quick add on to describing the plan.
+// toText moves the quick add on to describing the plan, once it has a time.
 func (m *Model) toText(first string) bool {
-	start, end, _, err := parseTimes(m.input)
+	start, end, n, err := parseTimes(m.input)
+	if err == nil && n == 0 {
+		err = errString("Start with a time, like 8 10.")
+	}
 	if err != nil {
 		m.notify("", err)
 		return false
@@ -716,7 +746,7 @@ func (m *Model) updatePopup(k, text string) {
 			text == "h" && m.input != "" && unicode.IsDigit([]rune(m.input)[len([]rune(m.input))-1]):
 			m.typeText(text)
 		case text != "":
-			// Typing words straight away: no time, or the time so far.
+			// Words after a time: the time is done, on to what.
 			m.toText(text)
 		}
 		return

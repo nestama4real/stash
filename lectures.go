@@ -120,8 +120,20 @@ func (m *Model) clampDash() {
 	if m.section != sectionLectures {
 		return
 	}
-	_, cursorLine, total := m.dashboardLines(m.layout())
+	_, cursorLine, top, bottom, total := m.dashboardLines(m.layout())
 	height := m.dashBodyHeight(m.layout())
+	if bottom-top <= height {
+		// The whole focused course fits: show all of it, from its title down.
+		if top < m.dashOffset {
+			m.dashOffset = top
+		}
+		if bottom > m.dashOffset+height {
+			m.dashOffset = bottom - height
+		}
+		m.dashOffset = max(0, min(m.dashOffset, total-height))
+		return
+	}
+	// A course taller than the screen: follow the selected row.
 	if cursorLine < m.dashOffset+1 {
 		m.dashOffset = cursorLine - 1
 	}

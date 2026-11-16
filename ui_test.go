@@ -471,21 +471,20 @@ func TestWeekNumbersFollowTheLectures(t *testing.T) {
 
 func TestParsePlan(t *testing.T) {
 	for in, want := range map[string][4]string{
-		"8-10 CompSec : S9":           {"1", "08:00", "10:00", "CompSec : S9"},
-		"mar 08h00 - 10h00 : PhyMec":  {"1", "08:00", "10:00", "PhyMec"},
-		"jeudi 14h Gym":               {"3", "14:00", "", "Gym"},
-		"sun 9:30-11 Read chapter 3":  {"6", "09:30", "11:00", "Read chapter 3"},
-		"Laundry":                     {"1", "", "", "Laundry"},
-		"10h15 → 12h Assistanat":      {"1", "10:15", "12:00", "Assistanat"},
-		"ven 2 problems of series 4":  {"4", "02:00", "", "problems of series 4"},
-		"Mardi Cours 3 relire 2 fois": {"1", "", "", "Cours 3 relire 2 fois"},
+		"8-10 CompSec : S9":             {"1", "08:00", "10:00", "CompSec : S9"},
+		"mar 08h00 - 10h00 : PhyMec":    {"1", "08:00", "10:00", "PhyMec"},
+		"jeudi 14h Gym":                 {"3", "14:00", "", "Gym"},
+		"sun 9:30-11 Read chapter 3":    {"6", "09:30", "11:00", "Read chapter 3"},
+		"10h15 → 12h Assistanat":        {"1", "10:15", "12:00", "Assistanat"},
+		"ven 2 problems of series 4":    {"4", "02:00", "", "problems of series 4"},
+		"Mardi 9 Cours 3 relire 2 fois": {"1", "09:00", "", "Cours 3 relire 2 fois"},
 	} {
 		day, start, end, text, err := parsePlan(in, 1)
 		if err != nil || [4]string{fmt.Sprint(day), start, end, text} != want {
 			t.Errorf("parsePlan(%q) = %d %q %q %q %v, want %v", in, day, start, end, text, err, want)
 		}
 	}
-	for _, bad := range []string{"", "mar", "25-26 Nope", "8-10"} {
+	for _, bad := range []string{"", "mar", "25-26 Nope", "8-10", "Laundry", "jeu Gym"} {
 		if _, _, _, _, err := parsePlan(bad, 0); err == nil {
 			t.Errorf("parsePlan(%q) accepted", bad)
 		}
@@ -511,7 +510,7 @@ func TestDashboardWorkAndPlans(t *testing.T) {
 	if len(m.workItems(colThisWeek)) != 1 || len(m.workItems(colPrevious)) != 1 {
 		t.Fatal("unexpected exercises")
 	}
-	m = press(m, tea.KeyRight, "")
+	m = key(m, tea.KeyRight, tea.ModCtrl) // To previous weeks.
 	m = press(m, ' ', "space")
 	if m.lectures[0].Exo != "done" || len(m.workItems(colPrevious)) != 1 {
 		t.Fatal("done lecture should stay visible until the week changes")
@@ -560,7 +559,7 @@ func TestDashboardWorkAndPlans(t *testing.T) {
 	if m.weekNumber(m.viewWeek()) != 4 || len(m.plansOn(m.viewWeek().AddDate(0, 0, 6))) != 1 {
 		t.Fatal("next week should hold the copy")
 	}
-	if m.courseFor("CompSec") != 0 || m.courseFor("PhyMec") != -1 {
+	if m.courseFor("CompSec") != 0 || m.courseFor("PhyMec") != -1 || m.courseFor("CSP") != -1 || m.courseFor("SA") != -1 {
 		t.Fatal("course abbreviations")
 	}
 }
@@ -727,12 +726,21 @@ func TestQuickPlan(t *testing.T) {
 		t.Fatalf("saved %+v", p)
 	}
 
-	// Words straight away: no time.
+	// A plan needs a time: words straight away are refused.
 	m = press(m, '5', "5")
+	m = typeKeys(m, "G")
+	if m.mode != modePlanTime || !m.failed || m.input != "" {
+		t.Fatalf("plan without time accepted: %q %q", m.mode, m.input)
+	}
+	m = press(m, tea.KeyEnter, "")
+	if m.mode != modePlanTime {
+		t.Fatal("enter without time accepted")
+	}
+	m = typeKeys(m, "18h")
 	m = typeKeys(m, "Gym")
 	m = press(m, tea.KeyEnter, "")
-	if p := m.plans[len(m.plans)-1]; p.Day.Weekday() != time.Friday || p.Start != "" || p.Text != "Gym" {
-		t.Fatalf("no-time plan %+v", p)
+	if p := m.plans[len(m.plans)-1]; p.Day.Weekday() != time.Friday || p.Start != "18:00" || p.Text != "Gym" {
+		t.Fatalf("time then words %+v", p)
 	}
 
 	// One time then enter; backspace on an empty description goes back.
@@ -809,5 +817,203 @@ func TestWeekNumberCorrection(t *testing.T) {
 	m2.lectures = append(m2.lectures, Lecture{ID: 99, CourseID: 1, Date: next, Theory: "none", Exo: "to do"})
 	if n := m2.weekNumber(next.AddDate(0, 0, 7)); n != 2 {
 		t.Fatalf("next semester week %d", n)
+	}
+}
+
+func TestPlannerTimelineAlignsTheWeek(t *testing.T) {
+	mon := weekStart(today())
+	m := Model{width: 200, height: 50, courses: []Course{{ID: 1, Name: "Software Entreprise", Nick: "SwEnt"}}}
+	add := func(day int, start, end, text string) {
+		m.plans = append(m.plans, Plan{ID: len(m.plans) + 1, Day: mon.AddDate(0, 0, day), Start: start, End: end, Text: text})
+	}
+	add(0, "13:00", "15:00", "Mon thirteen")
+	add(2, "12:10", "12:30", "Wed short")
+	add(2, "13:00", "15:00", "Wed thirteen")
+	add(4, "11:30", "13:00", "SwEnt Fri")
+	add(4, "12:00", "13:00", "Fri overlap")
+	m.goToWeek(mon)
+	m.clamp()
+	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+	row := func(text string) int {
+		for y, l := range lines {
+			if strings.Contains(l, text) {
+				return y
+			}
+		}
+		t.Fatalf("%q not shown\n%s", text, strings.Join(lines, "\n"))
+		return -1
+	}
+	// Same hour, same line, whatever the day.
+	if row("Mon thirteen") != row("Wed thirteen") {
+		t.Fatal("13h plans not aligned across days")
+	}
+	// Earlier plans sit higher; a 20-minute plan still shows time and text.
+	if !(row("SwEnt Fri") < row("Wed short") && row("Wed short") < row("Wed thirteen")) {
+		t.Fatal("plans not in time order down the week")
+	}
+	if row("Wed short") != row("12h10 → 12h30")+1 {
+		t.Fatal("short plan lost its text")
+	}
+	// Overlapping plans share the day side by side, the later one lower.
+	fri := lines[row("SwEnt Fri")]
+	if strings.Contains(fri, "overlap") || row("overlap") <= row("SwEnt Fri") {
+		t.Fatal("overlapping plans should sit side by side, the later lower")
+	}
+	if !strings.Contains(lines[row("overlap")], "▌            ▌") && !strings.Contains(lines[row("overlap")-1], "12h00") {
+		t.Fatal("overlap should start at 12h next to the first plan")
+	}
+	// The gutter shows the hours.
+	if !strings.Contains(lines[row("Mon thirteen")-1], "13h") {
+		t.Fatalf("13h label missing\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+func TestPlannerUsesTheScreen(t *testing.T) {
+	mon := weekStart(today())
+	for _, height := range []int{36, 44, 52, 60} {
+		m := Model{width: 190, height: height, courses: courses(2)}
+		for i := 0; i < 25; i++ { // Plenty of late work, as in a real semester.
+			m.lectures = append(m.lectures, Lecture{ID: i + 1, CourseID: 1, Title: "x.", Date: mon.AddDate(0, 0, -7*(i/2+1)), Theory: "none", Exo: "to do"})
+		}
+		for i, s := range [][2]string{{"08:00", "10:00"}, {"10:00", "12:00"}, {"12:10", "12:30"}, {"13:00", "15:00"}, {"17:00", "19:00"}, {"11:30", "13:00"}} {
+			m.plans = append(m.plans, Plan{ID: i + 1, Day: mon.AddDate(0, 0, i%5), Start: s[0], End: s[1], Text: "Plan"})
+		}
+		m.goToWeek(mon)
+		m.clamp()
+		lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+		if len(lines) != height {
+			t.Fatalf("height %d: %d lines", height, len(lines))
+		}
+		// Above the status bar, at most the "add" row and a spare line stay empty.
+		blank := 0
+		for y := len(lines) - 2; y >= 0 && strings.TrimSpace(lines[y]) == ""; y-- {
+			blank++
+		}
+		if blank > 2 {
+			t.Errorf("height %d: %d empty lines under the planner\n%s", height, blank, strings.Join(lines, "\n"))
+		}
+		// The hours get two lines each once there is room for it.
+		row := func(label string) int {
+			for y, l := range lines {
+				if strings.HasPrefix(strings.TrimSpace(l), label) {
+					return y
+				}
+			}
+			return -1
+		}
+		if height >= 52 && row("16h")-row("15h") != 2 {
+			t.Errorf("height %d: an hour takes %d lines, want 2", height, row("16h")-row("15h"))
+		}
+	}
+}
+
+func TestLecturesScrollShowsTheWholeCourse(t *testing.T) {
+	m := Model{section: sectionLectures, width: 190, height: 44}
+	for i, nick := range []string{"QuaMech", "SHS", "PODM", "CompSec", "SwEnt"} {
+		m.courses = append(m.courses, Course{ID: i + 1, Name: "Course " + nick, Nick: nick})
+		for j := 0; j < 10; j++ {
+			m.lectures = append(m.lectures, Lecture{ID: i*10 + j + 1, CourseID: i + 1, Title: fmt.Sprintf("%d.", j+1),
+				Date: today().AddDate(0, 0, 7*j), Theory: "none", Exo: "to do"})
+		}
+	}
+	m.focusCourse(0)
+	m.clamp()
+	visible := func(nick string) bool {
+		for _, l := range strings.Split(ansi.Strip(m.View().Content), "\n") {
+			if strings.Contains(l, "◆ "+nick+" ") {
+				return true
+			}
+		}
+		return false
+	}
+	order := []string{"QuaMech", "SHS", "PODM", "CompSec", "SwEnt"}
+	// Down the grid then back up: the selected course always shows its title.
+	for _, k := range []rune{tea.KeyDown, tea.KeyDown, tea.KeyRight, tea.KeyUp, tea.KeyLeft, tea.KeyUp, tea.KeyRight, tea.KeyLeft, tea.KeyLeft} {
+		m = press(m, k, "")
+		if !visible(order[m.dashCourse]) {
+			t.Fatalf("course %s selected but its title is off screen (offset %d)\n%s",
+				order[m.dashCourse], m.dashOffset, ansi.Strip(m.View().Content))
+		}
+	}
+	if m.dashCourse != 0 || m.dashOffset != 0 {
+		t.Fatalf("back on the first course, the grid should be at the top: course %d offset %d", m.dashCourse, m.dashOffset)
+	}
+}
+
+func TestDashboardCursor(t *testing.T) {
+	mon := weekStart(today())
+	m := Model{width: 190, height: 40, courses: courses(1)}
+	for i := 0; i < 30; i++ { // Late work, more than fits.
+		m.lectures = append(m.lectures, Lecture{ID: i + 1, CourseID: 1, Title: fmt.Sprintf("Late %02d", i),
+			Date: mon.AddDate(0, 0, -7-i), Theory: "none", Exo: "to do"})
+	}
+	m.lectures = append(m.lectures, Lecture{ID: 99, CourseID: 1, Title: "Due now", Date: mon, Theory: "none", Exo: "to do"})
+	m.plans = []Plan{{ID: 1, Day: mon.AddDate(0, 0, 2), Start: "09:00", End: "10:00", Text: "Plan"}}
+	m.goToWeek(mon)
+	m.clamp()
+	selected := func() string {
+		for _, l := range strings.Split(ansi.Strip(m.View().Content), "\n") {
+			if i := strings.Index(l, "▌"); i >= 0 && strings.Contains(l, "Late") {
+				return l[i:]
+			}
+		}
+		return ""
+	}
+	if m.dashCol != colThisWeek {
+		t.Fatal("start on this week")
+	}
+	m = key(m, tea.KeyRight, tea.ModCtrl)
+	rows := m.workRows(m.layout())
+	// Down past the bottom: the selection stays in sight, the list scrolls.
+	for i := 0; i < rows+3; i++ {
+		m = press(m, tea.KeyDown, "")
+		if want := fmt.Sprintf("Late %02d", i+1); !strings.Contains(selected(), want) {
+			t.Fatalf("after %d downs, %q not selected and shown: %q", i+1, want, selected())
+		}
+	}
+	top := m.workTop[colPrevious]
+	if top != 4 {
+		t.Fatalf("scrolled to %d, want 4", top)
+	}
+	// Up: the cursor climbs first, the list scrolls only from the top line.
+	for i := 0; i < rows-1; i++ {
+		m = press(m, tea.KeyUp, "")
+		if m.workTop[colPrevious] != top {
+			t.Fatalf("scrolled up after %d ups while the cursor could still climb", i+1)
+		}
+	}
+	m = press(m, tea.KeyUp, "")
+	if m.workTop[colPrevious] != top-1 || !strings.Contains(selected(), "Late 03") {
+		t.Fatalf("at the top line, up should scroll: top %d, %q", m.workTop[colPrevious], selected())
+	}
+	// The scroll position shows in the header, not over a lecture.
+	if view := ansi.Strip(m.View().Content); !strings.Contains(view, "↑3") {
+		t.Fatalf("scroll position missing\n%s", view)
+	}
+	// Arrows stay in the part; ctrl+arrows move between parts, which keep their cursor.
+	for i := 0; i < 40; i++ {
+		m = press(m, tea.KeyDown, "")
+	}
+	if m.dashZone != zoneWork {
+		t.Fatal("down left the work list")
+	}
+	item := m.dashItems[colPrevious]
+	m = key(m, tea.KeyDown, tea.ModCtrl)
+	m = press(m, tea.KeyRight, "")
+	m = press(m, tea.KeyRight, "")
+	if m.dashZone != zonePlanner || m.dashDay != daysBetween(mon, today())+2 && m.dashDay != 6 {
+		t.Fatalf("planner: zone %d day %d", m.dashZone, m.dashDay)
+	}
+	m = press(m, tea.KeyUp, "")
+	if m.dashZone != zonePlanner {
+		t.Fatal("up left the planner")
+	}
+	m = key(m, tea.KeyLeft, tea.ModCtrl)
+	if m.dashZone != zoneWork || m.dashCol != colThisWeek {
+		t.Fatal("ctrl+left should go to this week")
+	}
+	m = key(m, tea.KeyRight, tea.ModCtrl)
+	if m.dashItems[colPrevious] != item {
+		t.Fatal("previous weeks lost its cursor")
 	}
 }

@@ -179,9 +179,11 @@ func plural(n int) string {
 
 // dashboardLines lays the course blocks out in a grid and reports the line
 // of the selected row and the total height.
-func (m Model) dashboardLines(l layout) (lines []string, cursor, total int) {
+// dashboardLines lays the course blocks out in a grid. It reports the line
+// of the selected row, the lines the focused block spans, and the height.
+func (m Model) dashboardLines(l layout) (lines []string, cursor, blockTop, blockBottom, total int) {
 	if len(m.courses) == 0 {
-		return nil, 0, 0
+		return nil, 0, 0, 0, 0
 	}
 	cols := dashColumns(l.width)
 	width := blockWidth(l.width, cols)
@@ -194,6 +196,9 @@ func (m Model) dashboardLines(l layout) (lines []string, cursor, total int) {
 			b, c := m.courseBlock(ci, width, now)
 			if c >= 0 {
 				cursor = len(lines) + c
+			}
+			if ci == m.dashCourse {
+				blockTop, blockBottom = len(lines), len(lines)+len(b)
 			}
 			blocks = append(blocks, b)
 			height = max(height, len(b))
@@ -214,7 +219,7 @@ func (m Model) dashboardLines(l layout) (lines []string, cursor, total int) {
 		}
 		lines = append(lines, fill("", l.width, base))
 	}
-	return lines, cursor, len(lines)
+	return lines, cursor, blockTop, blockBottom, len(lines)
 }
 
 // summaryBox sums up progress over every course.
@@ -275,7 +280,7 @@ func (m Model) lecturesPane(l layout) []string {
 	}
 	lines = append(lines, fill("", l.width, base))
 	height := m.dashBodyHeight(l)
-	grid, _, total := m.dashboardLines(l)
+	grid, _, _, _, total := m.dashboardLines(l)
 	if len(m.courses) == 0 {
 		bg := base
 		empty := []string{

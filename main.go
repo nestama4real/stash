@@ -51,16 +51,17 @@ type Model struct {
 	dashRow    int // Lecture row in that block; one past the end is "+ New lecture".
 	dashOffset int // First visible line of the lectures grid.
 
-	plans    []Plan
-	dashWeek time.Time // Monday of the week shown by the dashboard.
-	dashTab  int       // Exercises or theory.
-	dashZone int       // Work or planner.
-	dashCol  int       // This week or previous weeks.
-	dashItem int       // Selected lecture of the work column.
-	dashDay  int       // Selected day of the planner, 0 is Monday.
-	dashPlan int       // Selected plan of that day; one past the end is "add".
-	justDone map[int]bool
-	undo     *Plan // The last deleted plan.
+	plans     []Plan
+	dashWeek  time.Time // Monday of the week shown by the dashboard.
+	dashTab   int       // Exercises or theory.
+	dashZone  int       // Work or planner.
+	dashCol   int       // This week or previous weeks.
+	dashItems [2]int    // Selected lecture of each work column…
+	workTop   [2]int    // …and the first one shown, as they scroll.
+	dashDay   int       // Selected day of the planner, 0 is Monday.
+	dashPlan  int       // Selected plan of that day; one past the end is "add".
+	justDone  map[int]bool
+	undo      *Plan // The last deleted plan.
 
 	planTimes          string // The quick add's times, as typed.
 	planStart, planEnd string

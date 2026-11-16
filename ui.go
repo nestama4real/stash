@@ -701,11 +701,12 @@ var (
 
 	dashboardHelp = []helpGroup{
 		{"Plan a day", []binding{
-			{"1…7", "Monday…Sunday"}, {"then 8 10␣", "from 8h to 10h"}, {"then words", "what to do"},
+			{"1…7", "Monday…Sunday"}, {"then 8 10␣", "from 8h to 10h"}, {"or 14h enter", "at 14h"}, {"then words", "what to do"},
 			{"enter", "save"}, {"⌫ (empty)", "back to the time"},
 		}},
 		{"Move", []binding{
-			{"↑↓←→", "move around"}, {"hjkl", "move around"}, {"[ ] / < >", "previous/next week"},
+			{"ctrl+←→", "this week / previous"}, {"ctrl+↑↓", "lectures / plan"},
+			{"↑↓←→", "within a part"}, {"g/G", "first/last lecture"}, {"[ ] / < >", "previous/next week"},
 			{"w", "back to this week"}, {"#", "fix the week number"},
 		}},
 		{"Work", []binding{
@@ -716,7 +717,7 @@ var (
 			{"u", "undo delete"}, {"c", "copy to next week"},
 		}},
 		{"One-line plan (a)", []binding{
-			{"8-10 CompSec S9", "today, 8h–10h"}, {"mar 14h Gym", "Tuesday, 14h"}, {"jeu Laundry", "Thursday"},
+			{"8-10 CompSec S9", "today, 8h–10h"}, {"mar 14h Gym", "Tuesday, 14h"},
 		}},
 		editingHelp, sectionsHelp, generalHelp,
 	}
