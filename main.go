@@ -2,6 +2,8 @@ package main
 
 import (
 	"database/sql"
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -592,7 +594,24 @@ func dbPath() (string, error) {
 }
 
 func main() {
+	demo := flag.Bool("demo", false, "open a throwaway database showing a typical week")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: stash [--demo]\n\n"+
+			"A terminal dashboard for your courses, lectures and week.\n"+
+			"Data lives in $STASH_DB, or ~/.local/share/stash/stash.db.\n\n")
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
 	path, err := dbPath()
+	if *demo {
+		// A fresh copy each time, dated around today, away from real data.
+		path = filepath.Join(os.TempDir(), "stash-demo.db")
+		err = os.Remove(path)
+		if os.IsNotExist(err) {
+			err = nil
+		}
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -603,6 +622,11 @@ func main() {
 	defer db.Close()
 	if err := migrate(db); err != nil {
 		log.Fatal(err)
+	}
+	if *demo {
+		if err := seedDemo(db, time.Now()); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	m := Model{db: db}

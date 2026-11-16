@@ -1,4 +1,4 @@
-module stash
+module github.com/nestama4real/stash
 
 go 1.26.0
 

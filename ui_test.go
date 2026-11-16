@@ -1017,3 +1017,28 @@ func TestDashboardCursor(t *testing.T) {
 		t.Fatal("previous weeks lost its cursor")
 	}
 }
+
+func TestDemo(t *testing.T) {
+	m := Model{db: testDB(t), width: 190, height: 50}
+	if err := seedDemo(m.db, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.load(); err != nil {
+		t.Fatal(err)
+	}
+	m.goToWeek(weekStart(time.Now()))
+	m.clamp()
+	if n := m.weekNumber(m.viewWeek()); n != 10 {
+		t.Fatalf("week %d, want 10", n)
+	}
+	if this, late := len(m.workItems(colThisWeek)), len(m.workItems(colPrevious)); this != 4 || late != 2 {
+		t.Fatalf("exercises: %d this week, %d late; want 4 and 2", this, late)
+	}
+	m.dashTab = tabTheory
+	if late := len(m.workItems(colPrevious)); late != 1 {
+		t.Fatalf("theory late: %d, want 1", late)
+	}
+	if len(m.plansOn(m.viewWeek())) != 3 || len(m.plansOn(m.viewWeek().AddDate(0, 0, 2))) != 3 || m.courseFor("ML") < 0 {
+		t.Fatal("demo plan")
+	}
+}
