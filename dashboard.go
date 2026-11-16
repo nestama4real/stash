@@ -201,7 +201,7 @@ func (m Model) workItems(col int) []int {
 				out = append(out, i)
 			}
 		case colPrevious:
-			if w.Before(week) && (!inSemester || !w.Before(start)) && (status != "done" || m.justDone[l.ID]) {
+			if w.Before(week) && (!inSemester || !w.Before(start)) && status != "done" {
 				out = append(out, i)
 			}
 		}
@@ -239,15 +239,37 @@ func (m *Model) setWork(status string) {
 		m.notify("", err)
 		return
 	}
-	// Keep finished lectures in sight until the dashboard is reloaded,
-	// so a slip of the key is one press away from being undone.
-	if m.justDone == nil {
-		m.justDone = map[int]bool{}
-	}
-	m.justDone[l.ID] = true
+	// Done late work leaves the list at once; u brings it back.
+	m.undoWork = &workUndo{id: l.ID, field: field, old: m.workField(l), col: m.dashCol, item: m.dashItems[m.dashCol]}
+	m.undo = nil
 	if err := m.loadLectures(); err != nil {
 		m.notify("", err)
+		return
 	}
+	m.notify(fmt.Sprintf("%s: %s %s · u to undo.", l.Title, field, status), nil)
+}
+
+// workUndo remembers a status change on the dashboard, to undo it.
+type workUndo struct {
+	id         int
+	field, old string
+	col, item  int
+}
+
+// undoLast undoes the last status change or plan deletion.
+func (m *Model) undoLast() {
+	if u := m.undoWork; u != nil {
+		m.undoWork = nil
+		if _, err := m.db.Exec("UPDATE lectures SET "+u.field+" = ? WHERE id = ?", u.old, u.id); err != nil {
+			m.notify("", err)
+			return
+		}
+		err := m.loadLectures()
+		m.dashZone, m.dashCol, m.dashItems[u.col] = zoneWork, u.col, u.item
+		m.notify("Undone.", err)
+		return
+	}
+	m.undoDelete()
 }
 
 // ---------------------------------------------------------------- planner
@@ -299,7 +321,6 @@ func (m *Model) goToWeek(week time.Time) {
 		m.dashDay = daysBetween(week, today())
 	}
 	m.dashItems, m.workTop, m.dashPlan = [2]int{}, [2]int{}, 0
-	m.justDone = nil
 	// Nothing due this week: start on what is late.
 	m.dashCol = colThisWeek
 	if len(m.workItems(colThisWeek)) == 0 {
@@ -421,7 +442,7 @@ func (m *Model) deletePlan() {
 		err = m.loadPlans()
 	}
 	if err == nil {
-		m.undo = &p
+		m.undo, m.undoWork = &p, nil
 	}
 	m.notify("Deleted “"+p.Text+"” · u to undo.", err)
 }
@@ -496,10 +517,10 @@ func (m *Model) updateDashboard(k string) {
 		}
 		return
 	case "x":
-		m.dashTab, m.dashItems, m.workTop, m.justDone = tabExercises, [2]int{}, [2]int{}, nil
+		m.dashTab, m.dashItems, m.workTop = tabExercises, [2]int{}, [2]int{}
 		return
 	case "t":
-		m.dashTab, m.dashItems, m.workTop, m.justDone = tabTheory, [2]int{}, [2]int{}, nil
+		m.dashTab, m.dashItems, m.workTop = tabTheory, [2]int{}, [2]int{}
 		return
 	case "[", "<":
 		m.goToWeek(m.viewWeek().AddDate(0, 0, -7))
@@ -520,7 +541,7 @@ func (m *Model) updateDashboard(k string) {
 		m.mode, m.input = modePlanAdd, ""
 		return
 	case "u":
-		m.undoDelete()
+		m.undoLast()
 		return
 	// ctrl + arrows go from one part of the dashboard to another; the
 	// arrows alone stay within it. Each part keeps its own cursor.

@@ -62,8 +62,8 @@ type Model struct {
 	workTop   [2]int    // …and the first one shown, as they scroll.
 	dashDay   int       // Selected day of the planner, 0 is Monday.
 	dashPlan  int       // Selected plan of that day; one past the end is "add".
-	justDone  map[int]bool
-	undo      *Plan // The last deleted plan.
+	undoWork  *workUndo // The last status change, to undo.
+	undo      *Plan     // The last deleted plan.
 
 	planTimes          string // The quick add's times, as typed.
 	planStart, planEnd string

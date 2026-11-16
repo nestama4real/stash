@@ -714,7 +714,7 @@ var (
 		}},
 		{"Plan", []binding{
 			{"a", "add (anywhere)"}, {"enter", "add / edit"}, {"e", "edit"}, {"d", "delete"},
-			{"u", "undo delete"}, {"c", "copy to next week"},
+			{"u", "undo done / delete"}, {"c", "copy to next week"},
 		}},
 		{"One-line plan (a)", []binding{
 			{"8-10 CompSec S9", "today, 8h–10h"}, {"mar 14h Gym", "Tuesday, 14h"},

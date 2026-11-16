@@ -512,12 +512,22 @@ func TestDashboardWorkAndPlans(t *testing.T) {
 	}
 	m = key(m, tea.KeyRight, tea.ModCtrl) // To previous weeks.
 	m = press(m, ' ', "space")
-	if m.lectures[0].Exo != "done" || len(m.workItems(colPrevious)) != 1 {
-		t.Fatal("done lecture should stay visible until the week changes")
+	if m.lectures[0].Exo != "done" || len(m.workItems(colPrevious)) != 0 {
+		t.Fatal("late work marked done should leave previous weeks at once")
+	}
+	m = press(m, 'u', "u")
+	if m.lectures[0].Exo != "to do" || len(m.workItems(colPrevious)) != 1 || m.selectedWork() != 0 {
+		t.Fatal("u should bring it back, selected")
+	}
+	// This week keeps its done lectures (this one starts done), struck through.
+	m = key(m, tea.KeyLeft, tea.ModCtrl)
+	if m.lectures[1].Exo != "done" || len(m.workItems(colThisWeek)) != 1 {
+		t.Fatal("this week should list its done lecture")
 	}
 	m = press(m, ' ', "space")
-	if m.lectures[0].Exo != "to do" {
-		t.Fatal("space again should undo")
+	m = press(m, ' ', "space")
+	if m.lectures[1].Exo != "done" || len(m.workItems(colThisWeek)) != 1 || m.selectedWork() != 1 {
+		t.Fatal("this week should keep a lecture marked done")
 	}
 	m = press(m, 't', "t")
 	if len(m.workItems(colThisWeek)) != 1 || len(m.workItems(colPrevious)) != 0 {
