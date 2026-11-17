@@ -139,8 +139,13 @@ func (m Model) courseBlock(ci, width int, now time.Time) (lines []string, cursor
 			dateStyle = st(faint, rbg).Italic(true)
 		}
 		date := dateStyle.Render(lec.Date.Format("Mon 02/01"))
+		name := title.Render(fitted(lec.Title, titleWidth-1))
+		if lec.Notes != "" {
+			// A pencil tells which lectures have notes.
+			name = title.Render(fitted(lec.Title, titleWidth-4)) + st(accent, rbg).Render(" ✎")
+		}
 		lines = append(lines, marker+
-			fill(title.Render(fitted(lec.Title, titleWidth-1)), titleWidth, rbg)+
+			fill(name, titleWidth, rbg)+
 			fill(date, dateWidth, rbg)+
 			fill(statusPill(lec.Theory, rbg), statusWidth, rbg)+
 			fill(statusPill(lec.Exo, rbg), statusWidth, rbg))
@@ -185,8 +190,8 @@ func (m Model) dashboardLines(l layout) (lines []string, cursor, blockTop, block
 	if len(m.courses) == 0 {
 		return nil, 0, 0, 0, 0
 	}
-	cols := dashColumns(l.width)
-	width := blockWidth(l.width, cols)
+	cols := dashColumns(l.listWidth)
+	width := blockWidth(l.listWidth, cols)
 	now := time.Now()
 	gap := st(ink, base).Render(strings.Repeat(" ", blockGap))
 	for start := 0; start < len(m.courses); start += cols {
@@ -215,9 +220,9 @@ func (m Model) dashboardLines(l layout) (lines []string, cursor, blockTop, block
 				}
 				row += fill(cell, width, base)
 			}
-			lines = append(lines, fill(row, l.width, base))
+			lines = append(lines, fill(row, l.listWidth, base))
 		}
-		lines = append(lines, fill("", l.width, base))
+		lines = append(lines, fill("", l.listWidth, base))
 	}
 	return lines, cursor, blockTop, blockBottom, len(lines)
 }
@@ -274,11 +279,11 @@ func (m Model) summaryBox(width int) []string {
 func (m Model) lecturesPane(l layout) []string {
 	var lines []string
 	if m.editing() || m.mode == modeLectureDelete {
-		lines = m.commandBox(l.width)
+		lines = m.commandBox(l.listWidth)
 	} else {
-		lines = m.summaryBox(l.width)
+		lines = m.summaryBox(l.listWidth)
 	}
-	lines = append(lines, fill("", l.width, base))
+	lines = append(lines, fill("", l.listWidth, base))
 	height := m.dashBodyHeight(l)
 	grid, _, _, _, total := m.dashboardLines(l)
 	if len(m.courses) == 0 {
@@ -289,26 +294,26 @@ func (m Model) lecturesPane(l layout) []string {
 			st(faint, bg).Italic(true).Render("Press ") + keycap("tab", bg) + st(faint, bg).Italic(true).Render(" to go to Courses and add one."),
 		}
 		for i := 0; i < max(0, height/3-2); i++ {
-			lines = append(lines, fill("", l.width, bg))
+			lines = append(lines, fill("", l.listWidth, bg))
 		}
 		for _, e := range empty {
-			pad := max(0, (l.width-lipgloss.Width(e))/2)
-			lines = append(lines, fill(st(ink, bg).Render(strings.Repeat(" ", pad))+e, l.width, bg))
+			pad := max(0, (l.listWidth-lipgloss.Width(e))/2)
+			lines = append(lines, fill(st(ink, bg).Render(strings.Repeat(" ", pad))+e, l.listWidth, bg))
 		}
 	} else {
 		end := min(total, m.dashOffset+height)
 		lines = append(lines, grid[min(m.dashOffset, end):end]...)
 	}
 	for len(lines) < l.bodyHeight {
-		lines = append(lines, fill("", l.width, base))
+		lines = append(lines, fill("", l.listWidth, base))
 	}
 	lines = lines[:l.bodyHeight]
 	// Scroll hints when blocks continue above or below.
 	if m.dashOffset > 0 && l.bodyHeight > 3 {
-		lines[3] = spread(fill("", 0, base), st(faint, base).Italic(true).Render("more above ")+st(cyan, base).Render("↑ "), l.width, base)
+		lines[3] = spread(fill("", 0, base), st(faint, base).Italic(true).Render("more above ")+st(cyan, base).Render("↑ "), l.listWidth, base)
 	}
 	if m.dashOffset+height < total && l.bodyHeight > 0 {
-		lines[l.bodyHeight-1] = spread(fill("", 0, base), st(faint, base).Italic(true).Render("more below ")+st(cyan, base).Render("↓ "), l.width, base)
+		lines[l.bodyHeight-1] = spread(fill("", 0, base), st(faint, base).Italic(true).Render("more below ")+st(cyan, base).Render("↓ "), l.listWidth, base)
 	}
 	return lines
 }

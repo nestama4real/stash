@@ -49,9 +49,10 @@ type Model struct {
 	section   int
 
 	lectures   []Lecture
-	dashCourse int // Index into courses of the focused block.
-	dashRow    int // Lecture row in that block; one past the end is "+ New lecture".
-	dashOffset int // First visible line of the lectures grid.
+	dashCourse int          // Index into courses of the focused block.
+	dashRow    int          // Lecture row in that block; one past the end is "+ New lecture".
+	dashOffset int          // First visible line of the lectures grid.
+	notes      *notesEditor // The open notes, in modeNotes.
 
 	plans     []Plan
 	dashWeek  time.Time // Monday of the week shown by the dashboard.
@@ -122,6 +123,15 @@ func migrate(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS lectures_course ON lectures(course_id, date)`)
 	if err != nil {
 		return err
+	}
+	var hasNotes int
+	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('lectures') WHERE name = 'notes'").Scan(&hasNotes); err != nil {
+		return err
+	}
+	if hasNotes == 0 {
+		if _, err := db.Exec("ALTER TABLE lectures ADD COLUMN notes TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
 	}
 	return migratePlans(db)
 }
@@ -244,8 +254,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.clamp()
+		m.sizeNotes()
+		return m, nil
+	case notesSaveMsg:
+		if m.notes != nil && msg.gen == m.notes.gen {
+			if err := m.saveNotes(); err != nil {
+				m.notify("", err)
+			}
+		}
 		return m, nil
 	case tea.PasteMsg:
+		if m.mode == modeNotes {
+			return m, m.updateNotes(msg)
+		}
 		if m.editing() {
 			m.typeText(msg.Content)
 		}
@@ -258,7 +279,18 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	k := key.String()
 	if k == "ctrl+c" {
+		if err := m.saveNotes(); err != nil {
+			// Better to stay than to lose the notes.
+			m.notify("Notes not saved: "+err.Error(), nil)
+			m.failed = true
+			return m, nil
+		}
 		return m, tea.Quit
+	}
+	if m.mode == modeNotes {
+		cmd := m.updateNotes(key)
+		m.clamp()
+		return m, cmd
 	}
 	var cmd tea.Cmd
 	if m.editing() && !m.inPopup() && m.editKey(k) {
@@ -310,7 +342,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case sectionDashboard:
 				m.updateDashboard(k)
 			case sectionLectures:
-				m.updateLectures(k)
+				cmd = m.updateLectures(k)
 			default:
 				cmd = m.updateNormal(k)
 			}
@@ -636,7 +668,14 @@ func main() {
 	m.focusCourse(0)
 	m.goToWeek(weekStart(time.Now()))
 
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	final, err := tea.NewProgram(m).Run()
+	if err != nil {
 		log.Fatal(err)
+	}
+	// Notes typed just before quitting are never lost.
+	if fm, ok := final.(Model); ok {
+		if err := fm.saveNotes(); err != nil {
+			log.Fatal(err)
+		}
 	}
 }

@@ -46,8 +46,10 @@ const rowHeight = 3
 
 type layout struct {
 	tiny                   bool
-	margin, width, height  int // Content area, inside the side margins.
-	listWidth, detailWidth int // detailWidth is 0 when the detail pane is hidden.
+	margin, width, height  int  // Content area, inside the side margins.
+	listWidth, detailWidth int  // detailWidth is 0 when the detail pane is hidden.
+	notesWidth             int  // Width of the notes pane, 0 when closed.
+	notesOnly              bool // The notes pane takes the whole width.
 	bodyHeight, pageSize   int
 	help                   []string
 }
@@ -75,6 +77,14 @@ func (m Model) layout() layout {
 	if m.section == sectionCourses && !m.noDetail && l.width >= 90 {
 		l.detailWidth = max(36, min(64, l.width*2/5))
 		l.listWidth = l.width - l.detailWidth - 1
+	}
+	if m.section == sectionLectures && m.mode == modeNotes {
+		// Beside the lectures when there is room, over them otherwise.
+		l.notesWidth = l.width
+		if l.notesOnly = l.width < 100; !l.notesOnly {
+			l.notesWidth = max(48, min(96, l.width/2))
+			l.listWidth = l.width - l.notesWidth - 1
+		}
 	}
 	l.pageSize = max(1, (l.bodyHeight-listChrome+1)/rowHeight)
 	return l
@@ -616,7 +626,7 @@ func (m Model) statusBar(l layout) string {
 		modeFilter: {" \uf002 FILTER ", cyan}, modeAdd: {" + NEW ", lime},
 		modeRename: {" \uf040 RENAME ", violet}, modeNick: {" \uf02b NICKNAME ", amber}, modeDelete: {" ✕ DELETE ", red},
 		modeLectureAdd: {" + NEW ", lime}, modeLectureTitle: {" \uf040 TITLE ", violet},
-		modeLectureDate: {" \uf073 DATE ", cyan}, modeLectureDelete: {" ✕ DELETE ", red},
+		modeLectureDate: {" \uf073 DATE ", cyan}, modeLectureDelete: {" ✕ DELETE ", red}, modeNotes: {" ✎ NOTES ", cyan},
 		modePlanAdd: {" + PLAN ", violet}, modePlanEdit: {" \uf040 PLAN ", violet},
 		modePlanTime: {" + PLAN ", violet}, modePlanText: {" + PLAN ", violet}, modeWeek: {" # WEEK ", cyan},
 	}
@@ -731,13 +741,16 @@ var (
 			{"shift+↑↓", "select a lecture"}, {"K/J", "select a lecture"},
 		}},
 		{"Edit", []binding{
-			{"a", "add to course"}, {"enter", "add / edit title"}, {"e", "edit title"}, {"d", "delete"},
+			{"a", "add to course"}, {"enter", "notes / add"}, {"e", "edit title"}, {"d", "delete"},
 		}},
 		{"Status", []binding{
 			{"t/T", "cycle theory"}, {"x/X", "cycle exo"}, {"space", "cycle exo"},
 		}},
 		{"Date", []binding{
 			{"w", "type a date"}, {"[ ]", "∓ one day"}, {"< >", "∓ one week"},
+		}},
+		{"Notes", []binding{
+			{"enter", "open (Markdown)"}, {"esc", "close"}, {"", "saved as you type"},
 		}},
 		editingHelp, sectionsHelp, generalHelp,
 	}
@@ -838,6 +851,17 @@ func (m Model) View() tea.View {
 			bar := m.scrollbar(l)
 			for i := range list {
 				list[i] += bar[i] + detail[i]
+			}
+		}
+		if l.notesWidth > 0 && m.notes != nil {
+			notes := m.notesPane(l)
+			if l.notesOnly {
+				list = notes
+			} else {
+				gap := st(ink, base).Render(" ")
+				for i := range list {
+					list[i] += gap + notes[i]
+				}
 			}
 		}
 		if m.inPopup() && len(list) > 0 {

@@ -23,7 +23,8 @@ file.
 
 **Lectures**: each course with its lectures, one per week, with date,
 theory and exercise status. New lectures are numbered and dated a week after
-the previous one.
+the previous one. Each lecture has its own Markdown notes, written in a side
+pane and saved as you type.
 
 ![Lectures](docs/screenshots/lectures.png)
 
@@ -85,6 +86,9 @@ The keys you will use most on the dashboard:
 
 In the lectures view, `a` adds a lecture to the selected course, `t` and `x`
 cycle theory and exercise status, and `[` `]` move a lecture's date by a day.
+`enter` opens the selected lecture's notes beside the list: write in
+Markdown, there is nothing to save, and `esc` closes them. Lectures with
+notes show a ✎.
 
 Every text field edits like a shell prompt: arrows, `ctrl+←` `ctrl+→` by
 word, `ctrl+w` to delete a word, `ctrl+u` to clear.

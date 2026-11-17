@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 // Sections of the app, cycled with tab.
@@ -43,10 +45,11 @@ type Lecture struct {
 	Date     time.Time
 	Theory   string
 	Exo      string
+	Notes    string // Markdown, edited in the notes pane.
 }
 
 func (m *Model) loadLectures() error {
-	rows, err := m.db.Query("SELECT id, course_id, title, date, theory, exo FROM lectures ORDER BY date, id")
+	rows, err := m.db.Query("SELECT id, course_id, title, date, theory, exo, notes FROM lectures ORDER BY date, id")
 	if err != nil {
 		return err
 	}
@@ -55,7 +58,7 @@ func (m *Model) loadLectures() error {
 	for rows.Next() {
 		var l Lecture
 		var date string
-		if err := rows.Scan(&l.ID, &l.CourseID, &l.Title, &date, &l.Theory, &l.Exo); err != nil {
+		if err := rows.Scan(&l.ID, &l.CourseID, &l.Title, &date, &l.Theory, &l.Exo, &l.Notes); err != nil {
 			return err
 		}
 		l.Date, _ = time.ParseInLocation(dateLayout, date, time.Local)
@@ -100,7 +103,7 @@ func (m *Model) selectLecture(id int) {
 }
 
 // dashColumns is the number of course blocks side by side.
-func (m Model) dashColumns() int { return dashColumns(m.layout().width) }
+func (m Model) dashColumns() int { return dashColumns(m.layout().listWidth) }
 
 func dashColumns(width int) int {
 	if width >= 140 {
@@ -161,7 +164,7 @@ func (m *Model) focusCourse(ci int) {
 	m.dashRow = len(m.lecturesOf(m.courses[ci].ID))
 }
 
-func (m *Model) updateLectures(k string) {
+func (m *Model) updateLectures(k string) tea.Cmd {
 	li := m.dashLecture()
 	cols := m.dashColumns()
 	switch k {
@@ -185,12 +188,11 @@ func (m *Model) updateLectures(k string) {
 		m.moveRow(-1)
 	case "a", "enter", "n":
 		if k == "enter" && li >= 0 {
-			m.startLectureEdit(modeLectureTitle)
-			return
+			return m.openNotes()
 		}
 		if len(m.courses) == 0 {
 			m.notify("", errString("Add a course first (tab to Courses)."))
-			return
+			return nil
 		}
 		count := len(m.lecturesOf(m.courses[m.dashCourse].ID))
 		m.mode, m.input = modeLectureAdd, fmt.Sprintf("%d. ", count+1)
@@ -219,6 +221,7 @@ func (m *Model) updateLectures(k string) {
 	case "<", "{":
 		m.shiftLecture(-7)
 	}
+	return nil
 }
 
 func (m *Model) startLectureEdit(mode string) {

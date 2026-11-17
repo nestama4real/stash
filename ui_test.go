@@ -1052,3 +1052,99 @@ func TestDemo(t *testing.T) {
 		t.Fatal("demo plan")
 	}
 }
+
+func notesModel(t *testing.T, width int) Model {
+	db := testDB(t)
+	if _, err := db.Exec(`INSERT INTO courses (id, name, position) VALUES (1, 'Quantum Mechanics', 1);
+		INSERT INTO lectures (course_id, title, date) VALUES (1, '1. Postulates', '2026-09-15')`); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{db: db, section: sectionLectures, width: width, height: 30}
+	if err := m.load(); err != nil {
+		t.Fatal(err)
+	}
+	m.dashRow = 0
+	return m
+}
+
+func TestNotesAutosave(t *testing.T) {
+	m := notesModel(t, 140)
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(Model)
+	if m.mode != modeNotes || m.notes == nil {
+		t.Fatalf("enter on a lecture should open its notes, mode=%q", m.mode)
+	}
+	m = typeKeys(m, "# Spin")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(Model)
+	m = typeKeys(m, "- up & down q")
+	if m.mode != modeNotes {
+		t.Fatal("typing q in the notes should not quit or leave")
+	}
+	if cmd == nil {
+		t.Fatal("a change should schedule a save")
+	}
+	// A stale save request is ignored; the latest one writes.
+	next, _ = m.Update(notesSaveMsg{gen: 1})
+	m = next.(Model)
+	var stored string
+	m.db.QueryRow("SELECT notes FROM lectures").Scan(&stored)
+	if stored != "" {
+		t.Fatalf("stale save wrote %q", stored)
+	}
+	next, _ = m.Update(notesSaveMsg{gen: m.notes.gen})
+	m = next.(Model)
+	m.db.QueryRow("SELECT notes FROM lectures").Scan(&stored)
+	if want := "# Spin\n- up & down q"; stored != want {
+		t.Fatalf("saved %q, want %q", stored, want)
+	}
+
+	view := ansi.Strip(m.View().Content)
+	for _, want := range []string{"N O T E S", "1. Postulates", "# Spin", "saved"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("notes pane misses %q:\n%s", want, view)
+		}
+	}
+	for i, line := range strings.Split(m.View().Content, "\n") {
+		if w := lipgloss.Width(line); w != 140 {
+			t.Fatalf("line %d is %d wide: %q", i, w, ansi.Strip(line))
+		}
+	}
+
+	// Closing saves what was typed since, and reopening shows it.
+	m = typeKeys(m, "!")
+	m = press(m, tea.KeyEscape, "")
+	if m.mode != modeNormal || m.notes != nil {
+		t.Fatal("esc should close the notes")
+	}
+	m.db.QueryRow("SELECT notes FROM lectures").Scan(&stored)
+	if stored != "# Spin\n- up & down q!" || m.lectures[0].Notes != stored {
+		t.Fatalf("close did not save: %q", stored)
+	}
+	if !strings.Contains(ansi.Strip(m.View().Content), "✎") {
+		t.Fatal("a lecture with notes should show a pencil")
+	}
+	m = press(m, tea.KeyEnter, "")
+	if m.notes.area.Value() != stored {
+		t.Fatalf("reopened notes: %q", m.notes.area.Value())
+	}
+}
+
+func TestNotesNarrowAndQuit(t *testing.T) {
+	m := notesModel(t, 70)
+	m = press(m, tea.KeyEnter, "")
+	m = typeKeys(m, "draft")
+	for i, line := range strings.Split(m.View().Content, "\n") {
+		if w := lipgloss.Width(line); w != 70 {
+			t.Fatalf("line %d is %d wide: %q", i, w, ansi.Strip(line))
+		}
+	}
+	// Quitting straight away still keeps the notes.
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	m = next.(Model)
+	var stored string
+	m.db.QueryRow("SELECT notes FROM lectures").Scan(&stored)
+	if stored != "draft" {
+		t.Fatalf("ctrl+c lost the notes: %q", stored)
+	}
+}
