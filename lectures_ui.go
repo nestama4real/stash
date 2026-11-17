@@ -19,7 +19,7 @@ func courseColor(index int) color.Color { return courseColors[index%len(courseCo
 
 // Column widths of a lecture row, besides the flexible title.
 const (
-	dateWidth   = 11
+	dateWidth   = 13 // A notes dot, the date, and a gap.
 	statusWidth = 13
 	blockGap    = 2
 )
@@ -115,7 +115,7 @@ func (m Model) courseBlock(ci, width int, now time.Time) (lines []string, cursor
 	label := st(faint, bg).Bold(true)
 	lines = append(lines,
 		st(line, bg).Render(strings.Repeat("─", max(0, inner))),
-		label.Render("  "+fmt.Sprintf("%-*s", titleWidth, "TITLE")+fmt.Sprintf("%-*s", dateWidth, "DATE")+
+		label.Render("  "+fmt.Sprintf("%-*s", titleWidth, "TITLE")+fmt.Sprintf("%*s  ", dateWidth-2, "DATE")+
 			fmt.Sprintf("%-*s", statusWidth, "THEORY")+fmt.Sprintf("%-*s", statusWidth, "EXO")))
 
 	thisWeek := weekStart(now)
@@ -138,14 +138,16 @@ func (m Model) courseBlock(ci, width int, now time.Time) (lines []string, cursor
 		case week.After(thisWeek):
 			dateStyle = st(faint, rbg).Italic(true)
 		}
-		date := dateStyle.Render(lec.Date.Format("Mon 02/01"))
-		name := title.Render(fitted(lec.Title, titleWidth-1))
+		// Dates sit on the right of their column, after a dot in the
+		// course's colour when the lecture has notes.
+		day := lec.Date.Format("Mon 02/01")
+		dot := st(ink, rbg).Render(strings.Repeat(" ", max(0, dateWidth-2-lipgloss.Width(day))))
 		if lec.Notes != "" {
-			// A pencil tells which lectures have notes.
-			name = title.Render(fitted(lec.Title, titleWidth-4)) + st(accent, rbg).Render(" ✎")
+			dot = st(ink, rbg).Render(strings.Repeat(" ", max(0, dateWidth-4-lipgloss.Width(day)))) + st(accent, rbg).Render("● ")
 		}
+		date := dot + dateStyle.Render(day)
 		lines = append(lines, marker+
-			fill(name, titleWidth, rbg)+
+			fill(title.Render(fitted(lec.Title, titleWidth-1)), titleWidth, rbg)+
 			fill(date, dateWidth, rbg)+
 			fill(statusPill(lec.Theory, rbg), statusWidth, rbg)+
 			fill(statusPill(lec.Exo, rbg), statusWidth, rbg))

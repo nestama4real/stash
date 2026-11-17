@@ -256,13 +256,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clamp()
 		m.sizeNotes()
 		return m, nil
-	case notesSaveMsg:
-		if m.notes != nil && msg.gen == m.notes.gen {
-			if err := m.saveNotes(); err != nil {
-				m.notify("", err)
-			}
-		}
-		return m, nil
 	case tea.PasteMsg:
 		if m.mode == modeNotes {
 			return m, m.updateNotes(msg)

@@ -1067,43 +1067,44 @@ func notesModel(t *testing.T, width int) Model {
 	return m
 }
 
-func TestNotesAutosave(t *testing.T) {
+func TestNotesSaveOnEsc(t *testing.T) {
 	m := notesModel(t, 140)
-	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = next.(Model)
-	if m.mode != modeNotes || m.notes == nil {
-		t.Fatalf("enter on a lecture should open its notes, mode=%q", m.mode)
+	m = press(m, tea.KeyEnter, "")
+	if m.mode != modeNotes || m.notes == nil || !m.notes.editing {
+		t.Fatalf("enter on a lecture without notes should open the editor, mode=%q", m.mode)
 	}
 	m = typeKeys(m, "# Spin")
-	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	m = next.(Model)
-	m = typeKeys(m, "- up & down q")
+	m = press(m, tea.KeyEnter, "")
+	m = typeKeys(m, "- **up** & down q")
 	if m.mode != modeNotes {
 		t.Fatal("typing q in the notes should not quit or leave")
 	}
-	if cmd == nil {
-		t.Fatal("a change should schedule a save")
-	}
-	// A stale save request is ignored; the latest one writes.
-	next, _ = m.Update(notesSaveMsg{gen: 1})
-	m = next.(Model)
 	var stored string
 	m.db.QueryRow("SELECT notes FROM lectures").Scan(&stored)
 	if stored != "" {
-		t.Fatalf("stale save wrote %q", stored)
+		t.Fatalf("notes saved before esc: %q", stored)
 	}
-	next, _ = m.Update(notesSaveMsg{gen: m.notes.gen})
-	m = next.(Model)
-	m.db.QueryRow("SELECT notes FROM lectures").Scan(&stored)
-	if want := "# Spin\n- up & down q"; stored != want {
-		t.Fatalf("saved %q, want %q", stored, want)
+	if !strings.Contains(ansi.Strip(m.View().Content), "unsaved") {
+		t.Fatal("unsaved notes should say so")
 	}
 
+	// esc saves and shows the notes rendered.
+	m = press(m, tea.KeyEscape, "")
+	m.db.QueryRow("SELECT notes FROM lectures").Scan(&stored)
+	if want := "# Spin\n- **up** & down q"; stored != want || m.lectures[0].Notes != want {
+		t.Fatalf("saved %q, want %q", stored, want)
+	}
+	if m.mode != modeNotes || m.notes.editing {
+		t.Fatal("esc in the editor should show the rendered notes")
+	}
 	view := ansi.Strip(m.View().Content)
-	for _, want := range []string{"N O T E S", "1. Postulates", "# Spin", "saved"} {
+	for _, want := range []string{"N O T E S", "1. Postulates", "Spin", "• up & down q", "preview"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("notes pane misses %q:\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "**up**") || strings.Contains(view, "# Spin") {
+		t.Fatalf("Markdown not rendered:\n%s", view)
 	}
 	for i, line := range strings.Split(m.View().Content, "\n") {
 		if w := lipgloss.Width(line); w != 140 {
@@ -1111,22 +1112,22 @@ func TestNotesAutosave(t *testing.T) {
 		}
 	}
 
-	// Closing saves what was typed since, and reopening shows it.
-	m = typeKeys(m, "!")
+	// enter edits again; esc twice saves and closes.
+	m = press(m, tea.KeyEnter, "")
+	if !m.notes.editing || m.notes.area.Value() != stored {
+		t.Fatalf("editing again: %q", m.notes.area.Value())
+	}
+	m = press(m, tea.KeyEscape, "")
 	m = press(m, tea.KeyEscape, "")
 	if m.mode != modeNormal || m.notes != nil {
-		t.Fatal("esc should close the notes")
+		t.Fatal("esc on the rendered notes should close them")
 	}
-	m.db.QueryRow("SELECT notes FROM lectures").Scan(&stored)
-	if stored != "# Spin\n- up & down q!" || m.lectures[0].Notes != stored {
-		t.Fatalf("close did not save: %q", stored)
-	}
-	if !strings.Contains(ansi.Strip(m.View().Content), "✎") {
-		t.Fatal("a lecture with notes should show a pencil")
+	if !strings.Contains(ansi.Strip(m.View().Content), "● Tue 15/09") {
+		t.Fatal("a lecture with notes should show a dot before its date")
 	}
 	m = press(m, tea.KeyEnter, "")
-	if m.notes.area.Value() != stored {
-		t.Fatalf("reopened notes: %q", m.notes.area.Value())
+	if m.notes == nil || m.notes.editing {
+		t.Fatal("notes that exist should open rendered")
 	}
 }
 

@@ -750,7 +750,7 @@ var (
 			{"w", "type a date"}, {"[ ]", "∓ one day"}, {"< >", "∓ one week"},
 		}},
 		{"Notes", []binding{
-			{"enter", "open (Markdown)"}, {"esc", "close"}, {"", "saved as you type"},
+			{"enter", "open / edit"}, {"esc", "save / close"}, {"↑↓", "scroll"},
 		}},
 		editingHelp, sectionsHelp, generalHelp,
 	}
